@@ -1,0 +1,52 @@
+FROM openshift/golang-builder:1.13 AS builder
+
+ENV SYNDESIS_REV=1.11.0 \
+    SYNDESIS_TAG=syndesis-1.11.0.fuse-780011 \
+    GOPATH=/go \
+    GOFLAGS= \
+    GO111MODULE=on GOOS=linux GOARCH=amd64 \
+    UPGRADE_VERSION=1.8
+
+COPY $REMOTE_SOURCE $REMOTE_SOURCE_DIR
+
+WORKDIR $REMOTE_SOURCE_DIR/app/install/operator
+RUN [ "/bin/bash", "-lc", "\
+    ./build.sh --operator-build go --image-build skip --source-gen skip --image-name registry.redhat.io/fuse7/fuse-online-operator --image-tag=${UPGRADE_VERSION}" ]
+RUN gzip $REMOTE_SOURCE_DIR/app/install/operator/dist/darwin-amd64/syndesis-operator
+RUN gzip $REMOTE_SOURCE_DIR/app/install/operator/dist/windows-amd64/syndesis-operator
+
+
+# -----------------------------------------------------------------------------
+FROM registry.redhat.io/ubi7/ubi-minimal
+
+ENV OPERATOR=/usr/local/bin/syndesis-operator \
+    USER_UID=1001 \
+    USER_NAME=operator \
+    UPGRADE_VERSION=1.8
+
+# install operator binary
+COPY --from=builder $REMOTE_SOURCE_DIR/app/install/operator/dist/linux-amd64/syndesis-operator ${OPERATOR}
+COPY --from=builder $REMOTE_SOURCE_DIR/app/install/operator/build/bin /usr/local/bin
+COPY --from=builder $REMOTE_SOURCE_DIR/app/install/operator/dist/darwin-amd64 /opt/clients/darwin-amd64
+COPY --from=builder $REMOTE_SOURCE_DIR/app/install/operator/dist/windows-amd64 /opt/clients/windows-amd64
+RUN mkdir -p /opt/clients/linux-amd64 && cd /opt/clients/linux-amd64 && ln -s ${OPERATOR}
+
+RUN  /usr/local/bin/user_setup
+USER ${USER_UID}
+
+# Add conf directory
+ADD build/conf /conf
+
+USER ${USER_UID}
+
+ENTRYPOINT ["/usr/local/bin/entrypoint", "run"]
+
+LABEL name="fuse7/fuse-online-operator" \
+      version="1.8" \
+      maintainer="Otavio Piske <opiske@redhat.com>" \
+      summary="Operator which manages the lifecycle of the Fuse Online application." \
+      description="Operator which manages the lifecycle of the Fuse Online application." \
+      com.redhat.component="fuse-online-operator-container" \
+      io.k8s.description="Operator which manages the lifecycle of the Fuse Online application." \
+      io.k8s.display-name="Red Hat Fuse Online Operator" \
+      io.openshift.tags="fuse"
